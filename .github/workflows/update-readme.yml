@@ -2,100 +2,52 @@
 name: Update README Activity
 
 on:
+  workflow_dispatch:        # 手動觸發
   schedule:
-    - cron: '0 */12 * * *'        # 每 12 小時自動跑一次（UTC）
-  workflow_dispatch:               # 手動觸發
-  push:
-    branches: [ main ]             # 合併到 main 後也更新
+    - cron: '0 */12 * * *'  # 每 12 小時跑一次（UTC）
 
-# 避免重疊執行造成衝突
-concurrency:
-  group: update-readme
-  cancel-in-progress: true
-
-# 最小權限：只授予寫入內容
 permissions:
-  contents: write
-  pull-requests: read
-  issues: read
+  contents: write           # 只給寫入內容的權限
 
 jobs:
   update-readme:
     runs-on: ubuntu-latest
     steps:
-      - name: Check out repository (no persisted credentials)
+      - name: Checkout
         uses: actions/checkout@v4
-        with:
-          persist-credentials: false   # 安全：避免把憑證寫入 .git/config
 
-      - name: Verify README markers exist
-        run: |
-          set -euo pipefail
-          START='<!--START_SECTION:activity-->'
-          END='<!--END_SECTION:activity-->'
-          test -f README.md
-          grep -q "$START" README.md || { echo "Missing START marker: $START"; exit 1; }
-          grep -q "$END"   README.md || { echo "Missing END marker: $END"; exit 1; }
-
-      - name: Build activity markdown (last 7 days)
-        id: build
+      - name: Generate activity section
         env:
-          GH_TOKEN: ${{ secrets.REPO_TOKEN }}  # gh CLI 憑證（請先在 repo Secrets 建立 REPO_TOKEN）
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}  # 使用內建 Token，避免 PAT 問題
           REPO: ${{ github.repository }}
         run: |
-          set -euo pipefail
-
-          NOW=$(date -u +%FT%TZ)
           SINCE=$(date -u -d '7 days ago' +%FT%TZ)
-
           {
             echo "### Recent Activity (last 7 days)"
             echo ""
-            echo "**Merged PRs**"
-            # 最近合併的 PR（最多 5 筆）
-            gh pr list --state merged --limit 5 --search "merged:>$SINCE" \
-              --json number,title,mergedAt,url \
-              --template '{{- if not (eq (len .) 0)}}{{range .}}{{printf "- #%v %s (%s)\n  %s\n" .number .title (timeago .mergedAt) .url}}{{end}}{{else}}- (none)\n{{end}}'
-
-            echo ""
             echo "**Recent Commits**"
-            # 最近提交（最多 5 筆）
-            gh api "repos/${REPO}/commits" --paginate -f since="$SINCE" \
-              -q '[.[].commit] | .[:5] |
-                  map("- " + .tree.sha[0:7] + " " + (.message | gsub("\\n"; " "))) | .[]' \
-              || echo "- (none)"
-
+            gh api repos/$REPO/commits --paginate -f since="$SINCE" \
+              -q '.[] | "- " + .sha[0:7] + " " + .commit.message | gsub("\\n"; " ")' | head -n 5
             echo ""
-            echo "_Last updated: ${NOW}_"
+            echo "_Last updated: $(date -u +%FT%TZ)_"
           } > activity.md
 
-          # 以標記為界覆寫 README 中間區塊
           START='<!--START_SECTION:activity-->'
           END='<!--END_SECTION:activity-->'
-          awk -v start="$START" -v end="$END" -v file="activity.md" '
-            $0 ~ start {print; system("cat " file); in=1; next}
-            $0 ~ end   {print; in=0; print; next}
+          awk -v start="$START" -v end="$END" '
+            $0 ~ start {print; while ((getline l < "activity.md") > 0) print l; close("activity.md"); in=1; next}
+            $0 ~ end   {print; in=0; next}
             !in {print}
-          ' README.md > README.new
+          ' README.md > README.new && mv README.new README.md
 
-          mv README.new README.md
-
-      - name: Commit & push if changed
-        env:
-          REPO_TOKEN: ${{ secrets.REPO_TOKEN }}
+      - name: Commit & Push
         run: |
-          set -euo pipefail
           if git diff --quiet; then
             echo "No changes to commit."
             exit 0
           fi
-
-          git config user.name  "github-actions[bot]"
+          git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add README.md
-          git commit -m "chore: auto-update README activity section [skip ci]"
-          # 用 PAT 推回，避免使用預設憑證；不要把 token 印到輸出
-          git remote set-url origin "https://x-access-token:${REPO_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          git commit -m "chore: auto-update README activity"
           git push
-
-#test
