@@ -19,12 +19,12 @@
 
 ---
 
+
 ## 🔄 最近活動 / Recent Activity
 <!--START_SECTION:activity-->
-### Recent Activity (last 7 days)
+（此區塊會由 GitHub Actions 自動更新，請勿手動修改）
+<!--END_SECTION:activity-->
 
-**Recent Commits**
-- 0673053 Update update-readme.yml
 
 _Last updated: 2025-09-27T19:24:33Z_
 <!--END_SECTION:activity-->
