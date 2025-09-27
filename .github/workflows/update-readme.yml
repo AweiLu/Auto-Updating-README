@@ -1,13 +1,13 @@
 
-name: Update README Activity
+name: Update README Activity (Minimal)
 
 on:
-  workflow_dispatch:        # 手動觸發
+  workflow_dispatch:          # 手動觸發
   schedule:
-    - cron: '0 */12 * * *'  # 每 12 小時跑一次（UTC）
+    - cron: '0 */12 * * *'    # 每 12 小時（UTC）
 
 permissions:
-  contents: write           # 只給寫入內容的權限
+  contents: write             # 只需寫入內容
 
 jobs:
   update-readme:
@@ -16,38 +16,60 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Generate activity section
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}  # 使用內建 Token，避免 PAT 問題
-          REPO: ${{ github.repository }}
+      - name: Ensure markers exist
         run: |
-          SINCE=$(date -u -d '7 days ago' +%FT%TZ)
+          set -e
+          START='<!--START_SECTION:activity-->'
+          END='<!--END_SECTION:activity-->'
+          if ! grep -q "$START" README.md || ! grep -q "$END" README.md; then
+            echo "::error::README.md 缺少標記區塊。請加入以下兩行："
+            echo "$START"
+            echo "$END"
+            exit 1
+          fi
+
+      - name: Generate activity (last 7 days) with git log
+        run: |
+          set -e
           {
             echo "### Recent Activity (last 7 days)"
             echo ""
             echo "**Recent Commits**"
-            gh api repos/$REPO/commits --paginate -f since="$SINCE" \
-              -q '.[] | "- " + .sha[0:7] + " " + .commit.message | gsub("\\n"; " ")' | head -n 5
+            # 顯示最近 7 天、最多 5 筆提交（若沒有就顯示 (none)）
+            if git log --since='7 days ago' --pretty='- %h %s' -n 5 | sed '/^$/d' | tee /dev/stderr | grep -q '^- '; then
+              git log --since='7 days ago' --pretty='- %h %s' -n 5
+            else
+              echo "- (none)"
+            fi
             echo ""
             echo "_Last updated: $(date -u +%FT%TZ)_"
           } > activity.md
 
+      - name: Replace README section between markers (sed)
+        run: |
+          set -e
           START='<!--START_SECTION:activity-->'
           END='<!--END_SECTION:activity-->'
-          awk -v start="$START" -v end="$END" '
-            $0 ~ start {print; while ((getline l < "activity.md") > 0) print l; close("activity.md"); in=1; next}
-            $0 ~ end   {print; in=0; next}
-            !in {print}
-          ' README.md > README.new && mv README.new README.md
+          # 用 sed 在標記之間插入 activity.md，並刪掉舊內容
+          sed -e "/$START/,/$END/{
+            /$START/{
+              p
+              r activity.md
+            }
+            /$END/p
+            d
+          }" README.md > README.new
+          mv README.new README.md
 
-      - name: Commit & Push
+      - name: Commit & Push if changed
         run: |
+          set -e
           if git diff --quiet; then
             echo "No changes to commit."
             exit 0
           fi
-          git config user.name "github-actions[bot]"
+          git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add README.md
-          git commit -m "chore: auto-update README activity"
+          git commit -m "chore: auto-update README activity (minimal)"
           git push
