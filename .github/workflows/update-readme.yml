@@ -1,101 +1,75 @@
 
-name: Update README Activity
+name: Update README Activity (Minimal)
 
 on:
+  workflow_dispatch:          # 手動觸發
   schedule:
-    - cron: '0 */12 * * *'        # 每 12 小時自動跑一次（UTC）
-  workflow_dispatch:               # 手動觸發
-  push:
-    branches: [ main ]             # 合併到 main 後也更新
+    - cron: '0 */12 * * *'    # 每 12 小時（UTC）
 
-# 避免重疊執行造成衝突
-concurrency:
-  group: update-readme
-  cancel-in-progress: true
-
-# 最小權限：只授予寫入內容
 permissions:
-  contents: write
-  pull-requests: read
-  issues: read
+  contents: write             # 只需寫入內容
 
 jobs:
   update-readme:
     runs-on: ubuntu-latest
     steps:
-      - name: Check out repository (no persisted credentials)
+      - name: Checkout
         uses: actions/checkout@v4
-        with:
-          persist-credentials: false   # 安全：避免把憑證寫入 .git/config
 
-      - name: Verify README markers exist
+      - name: Ensure markers exist
         run: |
-          set -euo pipefail
+          set -e
           START='<!--START_SECTION:activity-->'
           END='<!--END_SECTION:activity-->'
-          test -f README.md
-          grep -q "$START" README.md || { echo "Missing START marker: $START"; exit 1; }
-          grep -q "$END"   README.md || { echo "Missing END marker: $END"; exit 1; }
+          if ! grep -q "$START" README.md || ! grep -q "$END" README.md; then
+            echo "::error::README.md 缺少標記區塊。請加入以下兩行："
+            echo "$START"
+            echo "$END"
+            exit 1
+          fi
 
-      - name: Build activity markdown (last 7 days)
-        id: build
-        env:
-          GH_TOKEN: ${{ secrets.REPO_TOKEN }}  # gh CLI 憑證（請先在 repo Secrets 建立 REPO_TOKEN）
-          REPO: ${{ github.repository }}
+      - name: Generate activity (last 7 days) with git log
         run: |
-          set -euo pipefail
-
-          NOW=$(date -u +%FT%TZ)
-          SINCE=$(date -u -d '7 days ago' +%FT%TZ)
-
+          set -e
           {
             echo "### Recent Activity (last 7 days)"
             echo ""
-            echo "**Merged PRs**"
-            # 最近合併的 PR（最多 5 筆）
-            gh pr list --state merged --limit 5 --search "merged:>$SINCE" \
-              --json number,title,mergedAt,url \
-              --template '{{- if not (eq (len .) 0)}}{{range .}}{{printf "- #%v %s (%s)\n  %s\n" .number .title (timeago .mergedAt) .url}}{{end}}{{else}}- (none)\n{{end}}'
-
-            echo ""
             echo "**Recent Commits**"
-            # 最近提交（最多 5 筆）
-            gh api "repos/${REPO}/commits" --paginate -f since="$SINCE" \
-              -q '[.[].commit] | .[:5] |
-                  map("- " + .tree.sha[0:7] + " " + (.message | gsub("\\n"; " "))) | .[]' \
-              || echo "- (none)"
-
+            # 顯示最近 7 天、最多 5 筆提交（若沒有就顯示 (none)）
+            if git log --since='7 days ago' --pretty='- %h %s' -n 5 | sed '/^$/d' | tee /dev/stderr | grep -q '^- '; then
+              git log --since='7 days ago' --pretty='- %h %s' -n 5
+            else
+              echo "- (none)"
+            fi
             echo ""
-            echo "_Last updated: ${NOW}_"
+            echo "_Last updated: $(date -u +%FT%TZ)_"
           } > activity.md
 
-          # 以標記為界覆寫 README 中間區塊
+      - name: Replace README section between markers (sed)
+        run: |
+          set -e
           START='<!--START_SECTION:activity-->'
           END='<!--END_SECTION:activity-->'
-          awk -v start="$START" -v end="$END" -v file="activity.md" '
-            $0 ~ start {print; system("cat " file); in=1; next}
-            $0 ~ end   {print; in=0; print; next}
-            !in {print}
-          ' README.md > README.new
-
+          # 用 sed 在標記之間插入 activity.md，並刪掉舊內容
+          sed -e "/$START/,/$END/{
+            /$START/{
+              p
+              r activity.md
+            }
+            /$END/p
+            d
+          }" README.md > README.new
           mv README.new README.md
 
-      - name: Commit & push if changed
-        env:
-          REPO_TOKEN: ${{ secrets.REPO_TOKEN }}
+      - name: Commit & Push if changed
         run: |
-          set -euo pipefail
+          set -e
           if git diff --quiet; then
             echo "No changes to commit."
             exit 0
           fi
-
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add README.md
-          git commit -m "chore: auto-update README activity section [skip ci]"
-          # 用 PAT 推回，避免使用預設憑證；不要把 token 印到輸出
-          git remote set-url origin "https://x-access-token:${REPO_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          git commit -m "chore: auto-update README activity (minimal)"
           git push
-
-#test
