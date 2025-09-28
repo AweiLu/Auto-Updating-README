@@ -22,7 +22,12 @@
 
 ## 🔄 最近活動 / Recent Activity
 <!--START_SECTION:activity-->
-（此區塊會由 GitHub Actions 自動更新，請勿手動修改）
+### Recent Activity (last 7 days)
+
+**Recent Commits**
+- 1a86da2 Update README.md
+
+_Last updated: 2025-09-28T01:44:38Z_
 <!--END_SECTION:activity-->
 
 
